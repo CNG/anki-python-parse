@@ -61,6 +61,9 @@ classes = [ # Only collect these types of data as specified in DL tag class.
 
 
 def main(args):
+    import doctest
+    doctest.testmod(optionflags=doctest.ELLIPSIS)
+
     results = []
     for page in pages:
         extract(results, **page)
@@ -69,14 +72,58 @@ def main(args):
 
 
 def replace_links(tree):
-    """Replace anchors with their text."""
+    """Replace descendent anchors with their contents.
+
+    >>> xml = ''.join([
+    ... '<p>The <a class="reference internal" href="#module-doctest" title="do',
+    ... 'ctest: Test pieces of code within docstrings."><code class="xref py p',
+    ... 'y-mod docutils literal"><span class="pre">doctest</span></code></a> m',
+    ... 'odule searches for pieces of text that look like interactive Python s',
+    ... 'essions, and then executes those sessions to verify that they work ex',
+    ... 'actly as shown.  There are several common ways to use doctest:</p>'
+    ... ])
+    >>> root = html.fromstring(xml)
+    >>> etree.tostring(replace_links(root), encoding='unicode', method='xml')
+    '<p>The <c..."><s...="pre">doctest</span></code> module ... doctest:</p>'
+
+    >>> etree.tostring(replace_links(html.fromstring(
+    ... '<html>nice <a>test</a></html>')), encoding='unicode', method='xml')
+    '<html><body><p>nice test</p></body></html>'
+
+    >>> etree.tostring(replace_links(html.fromstring(
+    ... '<a>test</a>')), encoding='unicode', method='xml')
+    '<a>test</a>'
+    """
     for a in tree.xpath('.//a'):
+        if a.text:
+            p = a.getparent()
+            p.text = (p.text if p.text else '') + a.text
         for e in a.iterchildren():
             a.addprevious(e)
     etree.strip_elements(tree, 'a', with_tail=False)
+    return tree # Not necessary but makes chaining easier.
 
 
 def tostring(e_iter, method='html'):
+    """Stringify element or tree
+
+    >>> xml = '<html><p>This <b>huge</b> event.</p><p>Surprising.</p>'
+    >>> root = html.fromstring(xml)
+    >>> tostring('test')
+    'test'
+
+    >>> tostring(root)
+    '<html><body><p>This <b>huge</b> event.</p><p>Surprising.</p></body></html>'
+
+    >>> tostring(root, method='text')
+    'This huge event.Surprising.'
+
+    >>> [tostring(e) for e in root.xpath('.//p')]
+    ['<p>This <b>huge</b> event.</p>', '<p>Surprising.</p>']
+
+    >>> [tostring(e) for e in root.xpath('//b')]
+    ['<b>huge</b> event.']
+    """
     if type(e_iter) == html.HtmlElement:
         return etree.tostring(e_iter, encoding='unicode', method=method).strip()
     if type(e_iter) == str:
@@ -85,6 +132,21 @@ def tostring(e_iter, method='html'):
 
 
 def node(tree, xpath, default=''):
+    """Return first node in tree matching xpath or empty string.
+
+    >>> xml = '<html><p>This <b>huge</b> event.</p><p>Surprising.</p>'
+    >>> root = html.fromstring(xml)
+    >>> node(root, '//*', None)
+    <Element html at 0x...>
+
+    >>> node(root, '//a/text()', None)
+
+    >>> node(root, '//a')
+    ''
+
+    >>> node(root, '//p/text()', None)
+    'This '
+    """
     nodes = tree.xpath(xpath)
     return nodes[0] if nodes else default
 
@@ -98,7 +160,7 @@ def extract(results, label, url, xpath):
             continue # Skip DL tags of unknown types (usually have empty DD tags).
         dd = node(dl, './dd')
         back_e = node(dd, './p[1]|./blockquote/div/p[1]|./blockquote/div[1]')
-        if not back_e: continue # Skip items with no description.
+        if not len(back_e): continue # Skip items with no description.
         back = tostring(back_e)
         back_e.drop_tree() # Remove used part so not repeated in other.
         other = tostring(dd.iterchildren())
